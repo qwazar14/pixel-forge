@@ -385,6 +385,76 @@ public static class SelfTest
 			"layer sheet: one PNG per layer, names made file-safe");
 	}
 
+	static void IsoAndArrays(Node root)
+	{
+		var red = Color.Color8(255, 0, 0);
+		var blue = Color.Color8(0, 0, 255);
+		var none = new Color(0, 0, 0, 0);
+
+		var st = new Vector2I(10, 10);
+		var pts = Doc.IsoRectPoints(st, st + new Vector2I(2 * 3 + 2 * 2, 3 - 2)); // a = 3 along (2,1), b = 2 along (2,-1)
+		Check(pts.Contains(st) && pts.Contains(new Vector2I(16, 13)) && pts.Contains(new Vector2I(14, 8)) && pts.Contains(new Vector2I(20, 11))
+			&& pts.Count(q => q.Y == 13) == 2 && pts.Count(q => q.Y == 8) == 2, "iso rectangle: corners on 2:1 sides, pairs at the tips");
+		var d = new Doc(32, 32);
+		d.BeginStroke(); d.IsoRect(st, new Vector2I(20, 11), 1, red, true); d.EndStroke();
+		Check(d.Cur.Img.GetPixel(15, 10) == red && d.Cur.Img.GetPixel(10, 13).A == 0, "filled iso rectangle covers its inside only");
+
+		d = new Doc(16, 16);
+		d.BeginStroke(); d.Plot(0, 0, red); d.EndStroke();
+		d.Sel = new Rect2I(0, 0, 1, 1);
+		Check(d.ArrayCopies(4, new Vector2I(2, 1)), "array of 4");
+		Check(Count(d.Cur.Img, red) == 4 && d.Cur.Img.GetPixel(6, 3) == red && d.Sel == new Rect2I(6, 3, 1, 1) && d.Float == null, "array copies along 2:1, selection ends on the last copy");
+		Check(d.StepRepeat() && d.Cur.Img.GetPixel(8, 4) == red && Count(d.Cur.Img, red) == 5 && d.Sel == new Rect2I(8, 4, 1, 1), "repeat step adds one copy and moves the selection onto it");
+		d.Undo(); d.Undo();
+		Check(Count(d.Cur.Img, red) == 1, "array and repeat undo in one step each");
+
+		d.Sel = new Rect2I(0, 0, 2, 2);
+		d.LayerViaCopy();
+		Check(d.Layers.Count == 2 && d.Current == 1 && d.Cur.Img.GetPixel(0, 0) == red && Count(d.Cur.Img, red) == 1, "Ctrl+J copies the selection to a new layer");
+		d.FillSelection(blue);
+		Check(Count(d.Cur.Img, blue) == 4, "fill the selection");
+		Check(d.Nudge(new Vector2I(10, 0)) && d.Float != null, "arrow nudge lifts");
+		d.Anchor();
+		Check(d.Cur.Img.GetPixel(10, 0) == blue && d.Cur.Img.GetPixel(0, 0).A == 0, "nudged 10 px");
+		d.Sel = null;
+		d.LayerViaCopy();
+		Check(d.Layers.Count == 3, "Ctrl+J without a selection duplicates the layer");
+
+		// canvas: iso mode and the Move tool
+		var v = new CanvasView { Size = new Vector2(400, 400) };
+		root.AddChild(v);
+		d = new Doc(32, 32);
+		v.SetDoc(d);
+		v.Zoom = 10; v.Offset = Vector2.Zero; v.Fg = red;
+		Vector2 At(int x, int y) => new(x * 10 + 5, y * 10 + 5);
+		void Down(int x, int y, bool alt = false) => v._GuiInput(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true, Position = At(x, y), AltPressed = alt });
+		void Up(int x, int y) => v._GuiInput(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = false, Position = At(x, y) });
+		void To(int x, int y) => v._GuiInput(new InputEventMouseMotion { Position = At(x, y) });
+
+		v.IsoMode = true;
+		v.Tool = Tool.Line;
+		Down(0, 0); To(9, 5); Up(9, 5);
+		Check(d.Cur.Img.GetPixel(1, 0) == red && d.Cur.Img.GetPixel(2, 1) == red && d.Cur.Img.GetPixel(3, 1) == red, "iso mode: line snaps to 2:1 without Shift");
+		v.Tool = Tool.Ellipse;
+		Down(0, 10); To(20, 14); Up(20, 14);
+		var used = d.Cur.Img.GetRegion(new Rect2I(0, 10, 32, 22)).GetUsedRect();
+		Check(used.Size.X == 2 * used.Size.Y - 1 || used.Size.X == 2 * used.Size.Y || used.Size.X == 2 * used.Size.Y + 1, $"iso mode: ellipse is twice as wide as tall ({used.Size})");
+		d.Undo(); d.Undo();
+		v.IsoMode = false;
+
+		d.BeginStroke(); d.Plot(1, 1, red); d.EndStroke();
+		v.Tool = Tool.Move;
+		Down(5, 5); To(8, 7); Up(8, 7);
+		d.Anchor();
+		Check(d.Cur.Img.GetPixel(4, 3) == red && d.Cur.Img.GetPixel(1, 1).A == 0, "move tool drags the whole layer without a selection");
+		d.Sel = new Rect2I(4, 3, 1, 1);
+		v.Tool = Tool.Select;
+		Down(4, 3, alt: true); To(4, 9); Up(4, 9);
+		d.Anchor();
+		Check(d.Cur.Img.GetPixel(4, 3) == red && d.Cur.Img.GetPixel(4, 9) == red, "Alt-drag with the selection tool leaves a copy");
+		v.QueueFree();
+	}
+
 	public static int Run(Node root)
 	{
 		var red = Color.Color8(255, 0, 0);
@@ -431,6 +501,7 @@ public static class SelfTest
 		ImportAndResize(dir);
 		Game(dir);
 		Files(dir);
+		IsoAndArrays(root);
 
 		GD.Print(fails == 0 ? "SELFTEST PASSED" : $"SELFTEST FAILED: {fails}");
 		return fails == 0 ? 0 : 1;

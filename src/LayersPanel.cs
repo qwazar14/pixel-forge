@@ -16,13 +16,13 @@ public partial class LayersPanel : VBoxContainer
 	{
 		AddChild(new Label { Text = "Слои" });
 		var tools = new HFlowContainer();
-		tools.AddChild(Ui.Btn("+", "Новый слой (Shift+N)", () => doc.AddLayer()));
-		tools.AddChild(Ui.Btn("⧉", "Дублировать слой (Ctrl+J)", () => doc.DuplicateLayer()));
+		tools.AddChild(Ui.Btn("+", "Новый слой (Ctrl+Shift+N)", () => doc.AddLayer()));
+		tools.AddChild(Ui.Btn("⧉", "Дублировать слой (Ctrl+J; с выделением — только выделенное)", () => doc.DuplicateLayer()));
 		tools.AddChild(Ui.Btn("✕", "Удалить слой", () => doc.DeleteLayer()));
-		tools.AddChild(Ui.Btn("▲", "Выше", () => doc.MoveLayer(1)));
-		tools.AddChild(Ui.Btn("▼", "Ниже", () => doc.MoveLayer(-1)));
+		tools.AddChild(Ui.Btn("▲", "Выше (Ctrl+])", () => doc.MoveLayer(1)));
+		tools.AddChild(Ui.Btn("▼", "Ниже (Ctrl+[)", () => doc.MoveLayer(-1)));
 		tools.AddChild(Ui.Btn("Слить ↓", "Объединить с нижним (Ctrl+E)", () => doc.MergeDown()));
-		tools.AddChild(Ui.Btn("Свести", "Свести все видимые слои (подложки не трогает)", () => doc.FlattenVisible()));
+		tools.AddChild(Ui.Btn("Свести", "Объединить видимые (Ctrl+Shift+E; подложки не трогает)", () => doc.FlattenVisible()));
 		AddChild(tools);
 
 		var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(0, 200), SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };

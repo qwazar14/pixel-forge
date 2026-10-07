@@ -157,6 +157,34 @@ public class Doc
 		for (int i = 0; i <= n; i++) Stamp(x0 + sx * i, y0 + sy * (i / 2), size, c);
 	}
 
+	/// <summary>Isometric "rectangle" on the ground: a parallelogram with 2:1 sides from corner s towards e.</summary>
+	public void IsoRect(Vector2I s, Vector2I e, int size, Color c, bool fill)
+	{
+		var pts = IsoRectPoints(s, e);
+		if (!fill) { foreach (var p in pts) Stamp(p.X, p.Y, size, c); return; }
+		foreach (var row in pts.GroupBy(p => p.Y))
+			for (int x = row.Min(p => p.X); x <= row.Max(p => p.X); x++) Plot(x, row.Key, c);
+	}
+
+	/// <summary>Outline of the 2:1 parallelogram with corner s whose opposite corner is nearest e. Its sides run
+	/// along (2,1) and (2,-1); a and b count those steps.</summary>
+	public static HashSet<Vector2I> IsoRectPoints(Vector2I s, Vector2I e)
+	{
+		var d = e - s;
+		int a = (int)Math.Round((d.X + 2 * d.Y) / 4.0), b = (int)Math.Round((d.X - 2 * d.Y) / 4.0);
+		var pts = new HashSet<Vector2I>();
+		void Side(Vector2I from, int k, int dy) // k steps of (2, dy)
+		{
+			int sx = Math.Sign(k), n = 2 * Math.Abs(k);
+			for (int i = 0; i <= n; i++) pts.Add(new Vector2I(from.X + sx * i, from.Y + sx * dy * (i / 2)));
+		}
+		var c1 = s + new Vector2I(2 * a, a);
+		var c3 = s + new Vector2I(2 * b, -b);
+		Side(s, a, 1); Side(c3, a, 1);
+		Side(s, b, -1); Side(c1, b, -1);
+		return pts;
+	}
+
 	public void Rect(int x0, int y0, int x1, int y1, int size, Color c, bool fill)
 	{
 		if (fill)
@@ -349,6 +377,72 @@ public class Doc
 	}
 
 	public void Cut() { Copy(); DeleteSelection(); }
+
+	/// <summary>Fills the selection (or the whole layer) with a colour, like Alt/Ctrl+Backspace.</summary>
+	public void FillSelection(Color c)
+	{
+		if (!BeginStroke(false)) return;
+		var r = (Sel ?? Bounds).Intersection(Bounds);
+		for (int y = r.Position.Y; y < r.End.Y; y++)
+			for (int x = r.Position.X; x < r.End.X; x++) Record(strokeLayer, x, y, c);
+		EndStroke();
+	}
+
+	/// <summary>Ctrl+J: the selected pixels as a new layer above (the whole layer duplicated when nothing is selected).</summary>
+	public void LayerViaCopy()
+	{
+		Anchor();
+		var r = Sel?.Intersection(Bounds);
+		if (r == null) { DuplicateLayer(); return; }
+		if (r.Value.Area == 0) return;
+		var l = NewLayer(Cur.Name + " копия");
+		l.Img.BlitRect(Cur.Img, r.Value, r.Value.Position);
+		Structure(() => Layers.Insert(++Current, l));
+	}
+
+	/// <summary>Offset of the last array, for "repeat" (Ctrl+Alt+Shift+T).</summary>
+	public Vector2I LastStep;
+
+	/// <summary>The selection (or floating piece) repeated: count pieces in all, each step further than the last.
+	/// Transparent pixels don't cover what's under them; the selection ends on the last copy. One undo step.</summary>
+	public bool ArrayCopies(int count, Vector2I step)
+	{
+		if ((Sel == null && Float == null) || count < 2 || step == Vector2I.Zero || !Lift(true)) return false;
+		var f = Float;
+		for (int k = 1; k < count; k++)
+		{
+			var at = FloatPos + step * k;
+			for (int y = 0; y < f.GetHeight(); y++)
+				for (int x = 0; x < f.GetWidth(); x++)
+				{
+					int tx = at.X + x, ty = at.Y + y;
+					var c = f.GetPixel(x, y);
+					if (c.A > 0 && tx >= 0 && ty >= 0 && tx < W && ty < H) Record(strokeLayer, tx, ty, c);
+				}
+		}
+		LastStep = step;
+		var last = new Rect2I(FloatPos + step * (count - 1), f.GetSize());
+		Anchor(); // the copy drops back where it came from: no change there
+		Sel = last; // like Photoshop's step and repeat: the next repeat goes on from the last copy
+		return true;
+	}
+
+	/// <summary>One more copy of the selection one step further, the selection moving onto it.</summary>
+	public bool StepRepeat()
+	{
+		if ((Sel == null && Float == null) || LastStep == Vector2I.Zero || !Lift(true)) return false;
+		MoveFloat(FloatPos + LastStep);
+		Anchor();
+		return true;
+	}
+
+	/// <summary>Arrow keys: moves the selected pixels (the whole layer when nothing is selected).</summary>
+	public bool Nudge(Vector2I d)
+	{
+		if (!Lift()) return false;
+		MoveFloat(FloatPos + d);
+		return true;
+	}
 
 	public bool Paste()
 	{

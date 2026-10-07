@@ -5,7 +5,7 @@ using System.Linq;
 
 namespace PixelForge;
 
-public enum Tool { Pencil, Eraser, Fill, Picker, Line, Rect, Ellipse, Select, Anchor, Hand }
+public enum Tool { Move, Select, Pencil, Eraser, Fill, Picker, Line, Rect, Ellipse, Anchor, Hand }
 
 /// <summary>Shows the document and turns mouse input into strokes, zoom and pan.</summary>
 public partial class CanvasView : Control
@@ -16,6 +16,8 @@ public partial class CanvasView : Control
 	public Tool Tool = Tool.Pencil;
 	public int BrushSize = 1;
 	public bool FillShapes, Contiguous = true;
+	/// <summary>Isometric mode: lines snap to 2:1, rectangles lie on the ground as 2:1 diamonds, ellipses are iso circles.</summary>
+	public bool IsoMode;
 	public int Tolerance;
 	public Color Fg = Colors.Black, Bg = Colors.White;
 	public bool ShowGrid = true, ShowIso, ShowBase = true, ShowLight;
@@ -106,6 +108,8 @@ public partial class CanvasView : Control
 		QueueRedraw();
 	}
 
+	public void SetZoomCentered(int z) => SetZoom(z, Size / 2);
+
 	public void ZoomStep(int dir, Vector2? around = null)
 	{
 		// doubling feels right above 8x, single steps below
@@ -164,7 +168,9 @@ public partial class CanvasView : Control
 			return;
 		}
 		if (mb.ButtonIndex is not (MouseButton.Left or MouseButton.Right)) return;
-		if (Tool == Tool.Picker || Input.IsKeyPressed(Key.Alt)) { drag = Drag.Pick; Pick(p); return; }
+		// Alt picks a colour only with painting tools (Photoshop): with Move/Select it copies instead
+		bool paints = Tool is Tool.Pencil or Tool.Eraser or Tool.Fill or Tool.Line or Tool.Rect or Tool.Ellipse;
+		if (Tool == Tool.Picker || (paints && mb.AltPressed)) { drag = Drag.Pick; Pick(p); return; }
 
 		switch (Tool)
 		{
@@ -187,10 +193,11 @@ public partial class CanvasView : Control
 			case Tool.Anchor:
 				Doc.SetPivot(p);
 				break;
-			case Tool.Select:
-				if (mb.ButtonIndex == MouseButton.Left && Doc.Sel is Rect2I s && s.HasPoint(p))
+			case Tool.Move or Tool.Select:
+				// Move drags the selection from anywhere (the whole layer without one); Select only from inside it
+				if (mb.ButtonIndex == MouseButton.Left && (Tool == Tool.Move || (Doc.Sel is Rect2I s && s.HasPoint(p))))
 				{
-					if (!Doc.Lift(mb.CtrlPressed)) { Message?.Invoke(Doc.Cur.Locked ? "слой заблокирован" : "слой скрыт"); return; }
+					if (!Doc.Lift(mb.CtrlPressed || mb.AltPressed)) { Message?.Invoke(Doc.Cur.Locked ? "слой заблокирован" : "слой скрыт"); return; }
 					drag = Drag.Move;
 					floatStart = Doc.FloatPos;
 				}
@@ -213,8 +220,8 @@ public partial class CanvasView : Control
 			Hover = p;
 			StatusChanged?.Invoke();
 			QueueRedraw();
-			if (Tool == Tool.Select && drag == Drag.None)
-				MouseDefaultCursorShape = Doc.Sel is Rect2I s && s.HasPoint(p) ? CursorShape.Move : CursorShape.Cross;
+			if (drag == Drag.None)
+				MouseDefaultCursorShape = Tool == Tool.Move || (Tool == Tool.Select && Doc.Sel is Rect2I s && s.HasPoint(p)) ? CursorShape.Move : CursorShape.Cross;
 		}
 		if (p == last) return;
 		switch (drag)
@@ -249,9 +256,15 @@ public partial class CanvasView : Control
 	{
 		var c = PaintColor();
 		var d = p - start;
+		if (Tool == Tool.Rect && IsoMode)
+		{
+			Doc.IsoRect(start, p, BrushSize, c, FillShapes);
+			RefreshCurrent();
+			return;
+		}
 		if (Tool == Tool.Line)
 		{
-			if (!shift) Doc.Line(start.X, start.Y, p.X, p.Y, BrushSize, c);
+			if (!shift && !IsoMode) Doc.Line(start.X, start.Y, p.X, p.Y, BrushSize, c);
 			else
 			{
 				// snap to horizontal, vertical or 2:1
@@ -270,7 +283,13 @@ public partial class CanvasView : Control
 		}
 		else
 		{
-			if (shift)
+			if (IsoMode && Tool == Tool.Ellipse)
+			{
+				// iso circle: twice as wide as tall
+				int m = Math.Max(Math.Abs(d.X), 2 * Math.Abs(d.Y));
+				p = start + new Vector2I(d.X < 0 ? -m : m, (d.Y < 0 ? -m : m) / 2);
+			}
+			else if (shift)
 			{
 				int m = Math.Max(Math.Abs(d.X), Math.Abs(d.Y));
 				p = start + new Vector2I(d.X < 0 ? -m : m, d.Y < 0 ? -m : m);

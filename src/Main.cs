@@ -6,13 +6,14 @@ namespace PixelForge;
 
 public partial class Main : Control
 {
-	enum Cmd { New, Open, Save, SaveAs, Export, ExportLayers, Help, Prefs, Import, Resize, MirrorAll, Iso, Base, Light, Turned, Views, GameExport, Sketch, Quit, Undo, Redo, ReplaceColor, Copy, Cut, Paste, Delete, SelectAll, Deselect, FlipH, FlipV, RotCw, RotCcw, Grid, ZoomIn, ZoomOut, Fit }
+	enum Cmd { FillFg, FillBg, ViaCopy, Array, StepRepeat, NewLayer, MergeDown, MergeVisible, LayerUp, LayerDown, DeleteLayer, Actual, IsoMode, New, Open, Save, SaveAs, Export, ExportLayers, Help, Prefs, Import, Resize, MirrorAll, Iso, Base, Light, Turned, Views, GameExport, Sketch, Quit, Undo, Redo, ReplaceColor, Copy, Cut, Paste, Delete, SelectAll, Deselect, FlipH, FlipV, RotCw, RotCcw, Grid, ZoomIn, ZoomOut, Fit }
 
 	CanvasView view;
 	Label status;
 	ColorPickerButton fgBtn, bgBtn;
 	SpinBox brush, symX, symY;
-	CheckBox symXBox, symYBox;
+	CheckBox symXBox, symYBox, isoBox;
+	Tool lastShape = Tool.Rect;
 	PopupMenu viewMenu, gameMenu, recentMenu;
 	SpinBox baseW, baseD;
 	Label pivotLabel;
@@ -59,6 +60,7 @@ public partial class Main : Control
 		view.ColorsChanged += ColorsChanged;
 		view.Message += Say;
 		SetDoc(new Doc(64, 64));
+		if (OS.GetCmdlineUserArgs().Contains("--keytest")) { Callable.From(KeyTest).CallDeferred(); return; }
 		var timer = new Timer { WaitTime = 60, Autostart = true };
 		timer.Timeout += Autosave;
 		AddChild(timer);
@@ -83,6 +85,8 @@ public partial class Main : Control
 	}
 
 	static Key Shift(Key k) => (Key)((long)k | (long)KeyModifierMask.MaskShift);
+	static Key Alt(Key k) => (Key)((long)k | (long)KeyModifierMask.MaskAlt);
+	static Key CtrlAlt(Key k, bool shift = false) => (Key)((long)Ctrl(k, shift) | (long)KeyModifierMask.MaskAlt);
 	static Key Ctrl(Key k, bool shift = false) => (Key)((long)k | (long)KeyModifierMask.MaskCtrl | (shift ? (long)KeyModifierMask.MaskShift : 0));
 
 	Control BuildMenu()
@@ -112,8 +116,8 @@ public partial class Main : Control
 		I(f, "Сохранить", Cmd.Save, Ctrl(Key.S));
 		I(f, "Сохранить как…", Cmd.SaveAs, Ctrl(Key.S, true));
 		f.AddSeparator();
-		I(f, "Импорт PNG как слой…", Cmd.Import, Ctrl(Key.I, true));
-		I(f, "Экспорт PNG…", Cmd.Export, Ctrl(Key.E, true));
+		I(f, "Импорт PNG как слой…", Cmd.Import);
+		I(f, "Экспорт PNG…", Cmd.Export, CtrlAlt(Key.S, true));
 		I(f, "Экспорт слоёв (PNG на слой)…", Cmd.ExportLayers);
 		f.AddSeparator();
 		I(f, "Настройки…", Cmd.Prefs);
@@ -122,12 +126,18 @@ public partial class Main : Control
 
 		var e = M("Правка");
 		I(e, "Отменить", Cmd.Undo, Ctrl(Key.Z));
-		I(e, "Вернуть", Cmd.Redo, Ctrl(Key.Y));
+		I(e, "Вернуть", Cmd.Redo, Ctrl(Key.Z, true));
 		e.AddSeparator();
 		I(e, "Вырезать", Cmd.Cut, Ctrl(Key.X));
 		I(e, "Копировать", Cmd.Copy, Ctrl(Key.C));
 		I(e, "Вставить", Cmd.Paste, Ctrl(Key.V));
 		I(e, "Очистить", Cmd.Delete, Key.Delete);
+		I(e, "Залить основным цветом", Cmd.FillFg, Alt(Key.Backspace));
+		I(e, "Залить фоновым цветом", Cmd.FillBg, Ctrl(Key.Backspace));
+		e.AddSeparator();
+		I(e, "Дубль на новый слой", Cmd.ViaCopy, Ctrl(Key.J));
+		I(e, "Массив…", Cmd.Array, CtrlAlt(Key.T));
+		I(e, "Ещё одна копия с тем же шагом", Cmd.StepRepeat, CtrlAlt(Key.T, true));
 		e.AddSeparator();
 		I(e, "Выделить всё", Cmd.SelectAll, Ctrl(Key.A));
 		I(e, "Снять выделение", Cmd.Deselect, Ctrl(Key.D));
@@ -139,11 +149,24 @@ public partial class Main : Control
 		e.AddSeparator();
 		I(e, "Заменить цвет…", Cmd.ReplaceColor, Shift(Key.R));
 
+		var l = M("Слой");
+		I(l, "Новый слой", Cmd.NewLayer, Ctrl(Key.N, true));
+		I(l, "Дубль на новый слой (выделенное или весь слой)", Cmd.ViaCopy);
+		I(l, "Удалить слой", Cmd.DeleteLayer);
+		l.AddSeparator();
+		I(l, "Выше", Cmd.LayerUp, Ctrl(Key.Bracketright));
+		I(l, "Ниже", Cmd.LayerDown, Ctrl(Key.Bracketleft));
+		l.AddSeparator();
+		I(l, "Объединить с нижним", Cmd.MergeDown, Ctrl(Key.E));
+		I(l, "Объединить видимые", Cmd.MergeVisible, Ctrl(Key.E, true));
+
 		viewMenu = M("Вид");
-		viewMenu.AddCheckItem("Сетка пикселей   #", (int)Cmd.Grid);
+		viewMenu.AddCheckItem("Сетка пикселей", (int)Cmd.Grid, Ctrl(Key.Apostrophe));
 		viewMenu.SetItemChecked(0, true);
-		I(viewMenu, "Приблизить   +", Cmd.ZoomIn);
-		I(viewMenu, "Отдалить   −", Cmd.ZoomOut);
+		viewMenu.AddCheckItem("Изо-режим: линии 2:1, ромбы, изо-круги", (int)Cmd.IsoMode, Ctrl(Key.Semicolon, true));
+		I(viewMenu, "Приблизить", Cmd.ZoomIn, Ctrl(Key.Equal));
+		I(viewMenu, "Отдалить", Cmd.ZoomOut, Ctrl(Key.Minus));
+		I(viewMenu, "Реальный размер (1×)", Cmd.Actual, Ctrl(Key.Key1));
 		I(viewMenu, "Вписать в окно", Cmd.Fit, Ctrl(Key.Key0));
 		viewMenu.AddSeparator();
 		I(viewMenu, "Горячие клавиши…", Cmd.Help, Key.F1);
@@ -170,8 +193,9 @@ public partial class Main : Control
 		var box = new VBoxContainer { CustomMinimumSize = new Vector2(190, 0) };
 		var group = new ButtonGroup();
 		foreach (var (t, label) in new[] {
+			(Tool.Move, "Перемещение  V"), (Tool.Select, "Выделение  M"),
 			(Tool.Pencil, "Карандаш  B"), (Tool.Eraser, "Ластик  E"), (Tool.Fill, "Заливка  G"), (Tool.Picker, "Пипетка  I"),
-			(Tool.Line, "Линия  L"), (Tool.Rect, "Прямоугольник  R"), (Tool.Ellipse, "Эллипс  O"), (Tool.Select, "Выделение  M"),
+			(Tool.Line, "Линия  U"), (Tool.Rect, "Прямоугольник  U"), (Tool.Ellipse, "Эллипс  U"),
 			(Tool.Anchor, "Якорь  A"), (Tool.Hand, "Рука  H") })
 		{
 			var b = new Button { Text = label, ToggleMode = true, ButtonGroup = group, FocusMode = FocusModeEnum.None, Alignment = HorizontalAlignment.Left };
@@ -187,6 +211,7 @@ public partial class Main : Control
 		brush.ValueChanged += v => { view.BrushSize = (int)v; view.QueueRedraw(); };
 		box.AddChild(brush);
 		box.AddChild(Check("Заливать фигуры", false, on => view.FillShapes = on));
+		box.AddChild(Check("Изо-режим 2:1", false, on => SetIso(on), out isoBox));
 
 		box.AddChild(new Label { Text = "Допуск заливки" });
 		var tol = new SpinBox { MinValue = 0, MaxValue = 255, Value = 0 };
@@ -239,8 +264,8 @@ public partial class Main : Control
 		bgBtn.ColorChanged += c => { view.Bg = c; ColorsChanged(); };
 		row.AddChild(fgBtn); row.AddChild(bgBtn);
 		row.AddChild(Ui.Btn("⇄", "Поменять местами (X)", SwapColors));
-		row.AddChild(Ui.Btn("☀", "Светлее по рампе ([)", () => StepColor(1)));
-		row.AddChild(Ui.Btn("☾", "Темнее по рампе (])", () => StepColor(-1)));
+		row.AddChild(Ui.Btn("☀", "Светлее по рампе (Shift+[)", () => StepColor(1)));
+		row.AddChild(Ui.Btn("☾", "Темнее по рампе (Shift+])", () => StepColor(-1)));
 		box.AddChild(row);
 
 		layers = new LayersPanel { SizeFlagsVertical = SizeFlags.ExpandFill };
@@ -273,8 +298,17 @@ public partial class Main : Control
 		if (doc.Palette.Step(view.Fg, dir) is Color c) { view.Fg = c; ColorsChanged(); }
 	}
 
+	void SetIso(bool on)
+	{
+		view.IsoMode = on;
+		isoBox.SetPressedNoSignal(on);
+		viewMenu.SetItemChecked(viewMenu.GetItemIndex((int)Cmd.IsoMode), on);
+		Say(on ? "изо-режим: линии 2:1, прямоугольник — ромб на земле, эллипс — изо-круг" : "изо-режим выключен");
+	}
+
 	void SetTool(Tool t)
 	{
+		if (t is Tool.Line or Tool.Rect or Tool.Ellipse) lastShape = t;
 		view.Tool = t;
 		toolBtns[t].ButtonPressed = true;
 		view.QueueRedraw();
@@ -296,6 +330,46 @@ public partial class Main : Control
 		palette.SetDoc(d);
 		UpdateTitle();
 		UpdateStatus();
+	}
+
+	/// <summary>--keytest (headless): presses the Photoshop-style keys through the real window and checks what they did.</summary>
+	void KeyTest()
+	{
+		int fails = 0;
+		void Key(Key key, bool ctrl = false, bool shift = false, bool alt = false) =>
+			GetViewport().PushInput(new InputEventKey { Keycode = key, Pressed = true, CtrlPressed = ctrl, ShiftPressed = shift, AltPressed = alt });
+		void Check(bool ok, string what) { GD.Print((ok ? "ok   " : "FAIL ") + what); if (!ok) fails++; }
+
+		Key(Godot.Key.V); Check(view.Tool == Tool.Move, "V move");
+		Key(Godot.Key.M); Check(view.Tool == Tool.Select, "M select");
+		Key(Godot.Key.U); Check(view.Tool == Tool.Rect, "U shape");
+		Key(Godot.Key.U, shift: true); Check(view.Tool == Tool.Ellipse, "Shift+U next shape");
+		Key(Godot.Key.B); Check(view.Tool == Tool.Pencil, "B pencil");
+		Key(Godot.Key.Bracketright); Key(Godot.Key.Bracketright); Check(view.BrushSize == 3, "] bigger brush");
+		Key(Godot.Key.Bracketleft); Check(view.BrushSize == 2, "[ smaller brush");
+		view.Fg = Colors.Red; Key(Godot.Key.D); Check(view.Fg == Colors.Black && view.Bg == Colors.White, "D default colours");
+		Key(Godot.Key.X); Check(view.Fg == Colors.White, "X swap");
+		Key(Godot.Key.N, ctrl: true, shift: true); Check(doc.Layers.Count == 2, "Ctrl+Shift+N new layer");
+		Key(Godot.Key.Bracketleft, ctrl: true); Check(doc.Current == 0, "Ctrl+[ layer down");
+		Key(Godot.Key.Bracketright, ctrl: true); Check(doc.Current == 1, "Ctrl+] layer up");
+		Key(Godot.Key.E, ctrl: true); Check(doc.Layers.Count == 1, "Ctrl+E merge down");
+		Key(Godot.Key.Apostrophe, ctrl: true); Check(!view.ShowGrid, "Ctrl+' grid off");
+		Key(Godot.Key.Semicolon, ctrl: true, shift: true); Check(view.IsoMode, "Ctrl+Shift+; iso mode");
+		Key(Godot.Key.Key1, ctrl: true); Check(view.Zoom == 1, "Ctrl+1 actual size");
+		Key(Godot.Key.Equal, ctrl: true); Check(view.Zoom == 2, "Ctrl+= zoom in");
+		Key(Godot.Key.A, ctrl: true); Check(doc.Sel != null, "Ctrl+A select all");
+		Key(Godot.Key.Backspace, alt: true); Check(doc.Cur.Img.GetPixel(5, 5) == Colors.White, "Alt+Backspace fill with the primary colour");
+		Key(Godot.Key.J, ctrl: true); Check(doc.Layers.Count == 2, "Ctrl+J layer via copy");
+		Key(Godot.Key.Z, ctrl: true); Check(doc.Layers.Count == 1, "Ctrl+Z");
+		Key(Godot.Key.Z, ctrl: true, shift: true); Check(doc.Layers.Count == 2, "Ctrl+Shift+Z redo");
+		doc.Sel = new Rect2I(0, 0, 2, 2);
+		Key(Godot.Key.Right, shift: true); Check(doc.Float != null && doc.FloatPos == new Vector2I(10, 0), "Shift+→ nudges 10 px");
+		Key(Godot.Key.Enter); Check(doc.Float == null, "Enter drops it");
+		Key(Godot.Key.T, ctrl: true, alt: true); Check(GetChildren().OfType<ConfirmationDialog>().Any(d => d.Title == "Массив"), "Ctrl+Alt+T array dialog");
+		foreach (var dlg in GetChildren().OfType<ConfirmationDialog>()) { dlg.Hide(); dlg.QueueFree(); }
+		Key(Godot.Key.D, ctrl: true); Check(doc.Sel == null, "Ctrl+D deselect");
+		GD.Print(fails == 0 ? "KEYTEST PASSED" : $"KEYTEST FAILED: {fails}");
+		GetTree().Quit(fails == 0 ? 0 : 1);
 	}
 
 	void SyncGameMenu()
@@ -330,38 +404,59 @@ public partial class Main : Control
 			+ (doc.Sel is Rect2I s ? $"   |   выделение {s.Size.X}×{s.Size.Y} от {s.Position.X},{s.Position.Y}" + (doc.Float != null ? " (плавает, Enter — опустить)" : "") : "") + (Time.GetTicksMsec() < messageUntil ? $"   |   {message}" : "");
 	}
 
+	/// <summary>Keys the menus don't carry, Photoshop-style. Menu accelerators come first (MenuBar shortcuts).</summary>
 	public override void _UnhandledKeyInput(InputEvent e)
 	{
-		if (e is not InputEventKey k || !k.Pressed || k.Echo && k.Keycode is not (Key.Equal or Key.Minus)) return;
-		if (k.Unicode == '#' || (k.ShiftPressed && k.PhysicalKeycode == Key.Key3)) { Run(Cmd.Grid); AcceptEvent(); return; }
-		if (k.CtrlPressed && k.ShiftPressed && k.Keycode == Key.Z) { doc.Redo(); AcceptEvent(); return; }
-		if (k.CtrlPressed && !k.ShiftPressed && !k.AltPressed && k.Keycode is Key.E or Key.J)
+		if (e is not InputEventKey k || !k.Pressed) return;
+		bool arrows = k.Keycode is Key.Left or Key.Right or Key.Up or Key.Down;
+		if (k.Echo && !arrows && k.Keycode is not (Key.Bracketleft or Key.Bracketright)) return;
+		if (k.CtrlPressed && !k.ShiftPressed && !k.AltPressed && k.Keycode == Key.Y) { doc.Redo(); AcceptEvent(); return; }
+		if (k.CtrlPressed && k.AltPressed && !k.ShiftPressed && k.Keycode == Key.Z) { doc.Undo(); AcceptEvent(); return; }
+		if (k.CtrlPressed || k.AltPressed) return;
+		if (arrows)
 		{
-			if (k.Keycode == Key.E) doc.MergeDown(); else doc.DuplicateLayer();
+			// nudge the selection (or, with the Move tool, the whole layer): 1 px, Shift 10 px
+			if (doc.Sel == null && doc.Float == null && view.Tool != Tool.Move) return;
+			int n = k.ShiftPressed ? 10 : 1;
+			var d = k.Keycode switch { Key.Left => new Vector2I(-n, 0), Key.Right => new Vector2I(n, 0), Key.Up => new Vector2I(0, -n), _ => new Vector2I(0, n) };
+			if (!doc.Nudge(d)) Say(doc.Cur.Locked ? "слой заблокирован" : "слой скрыт");
+			view.QueueRedraw();
+			UpdateStatus();
 			AcceptEvent();
 			return;
 		}
-		if (k.CtrlPressed || k.AltPressed) return;
-		if (k.ShiftPressed && k.Keycode == Key.N) { doc.AddLayer(); AcceptEvent(); return; }
+		if (k.ShiftPressed)
+		{
+			switch (k.Keycode)
+			{
+				case Key.U: // cycle the shape tools
+					SetTool(lastShape switch { Tool.Rect => Tool.Ellipse, Tool.Ellipse => Tool.Line, _ => Tool.Rect });
+					break;
+				case Key.Bracketleft: StepColor(1); break;
+				case Key.Bracketright: StepColor(-1); break;
+				default: return;
+			}
+			AcceptEvent();
+			return;
+		}
 		switch (k.Keycode)
 		{
+			case Key.V: SetTool(Tool.Move); break;
+			case Key.M: SetTool(Tool.Select); break;
 			case Key.B: SetTool(Tool.Pencil); break;
 			case Key.E: SetTool(Tool.Eraser); break;
-			case Key.I: SetTool(Tool.Picker); break;
-			case Key.H: SetTool(Tool.Hand); break;
 			case Key.G: SetTool(Tool.Fill); break;
-			case Key.L: SetTool(Tool.Line); break;
-			case Key.R: SetTool(Tool.Rect); break;
-			case Key.O: SetTool(Tool.Ellipse); break;
-			case Key.M: SetTool(Tool.Select); break;
+			case Key.I: SetTool(Tool.Picker); break;
+			case Key.U: SetTool(lastShape); break;
 			case Key.A: SetTool(Tool.Anchor); break;
+			case Key.H: SetTool(Tool.Hand); break;
+			case Key.X: SwapColors(); break;
+			case Key.D: view.Fg = Colors.Black; view.Bg = Colors.White; ColorsChanged(); break;
+			case Key.Bracketleft: brush.Value -= 1; break;
+			case Key.Bracketright: brush.Value += 1; break;
 			case Key.Enter or Key.KpEnter: doc.Anchor(); break;
 			case Key.Escape: doc.Deselect(); view.QueueRedraw(); UpdateStatus(); break;
-			case Key.X: SwapColors(); break;
-			case Key.Bracketleft: StepColor(1); break;
-			case Key.Bracketright: StepColor(-1); break;
-			case Key.Equal or Key.KpAdd: Run(Cmd.ZoomIn); break;
-			case Key.Minus or Key.KpSubtract: Run(Cmd.ZoomOut); break;
+			case Key.Backspace: Run(Cmd.Delete); break;
 			default: return;
 		}
 		AcceptEvent();
@@ -383,6 +478,22 @@ public partial class Main : Control
 			case Cmd.Export: Ui.PickFile(this, FileDialog.FileModeEnum.SaveFile, new[] { "*.png ; PNG" }, p => Report(doc.ExportPng(p), "Экспорт")); break;
 			case Cmd.Quit: Guard(() => GetTree().Quit()); break;
 			case Cmd.Help: Help.Show(this); break;
+			case Cmd.FillFg or Cmd.FillBg:
+				var fc = c == Cmd.FillFg ? view.Fg : view.Bg;
+				if (doc.Palette.Strict && !doc.Palette.Contains(fc)) Say("цвет не из палитры (режим «только палитра»)");
+				else doc.FillSelection(fc);
+				break;
+			case Cmd.ViaCopy: doc.LayerViaCopy(); break;
+			case Cmd.Array: ShowArrayDialog(); break;
+			case Cmd.StepRepeat: if (!doc.StepRepeat()) Say("сначала сделайте массив (Ctrl+Alt+T) с выделением"); view.QueueRedraw(); break;
+			case Cmd.NewLayer: doc.AddLayer(); break;
+			case Cmd.DeleteLayer: doc.DeleteLayer(); break;
+			case Cmd.LayerUp: doc.MoveLayer(1); break;
+			case Cmd.LayerDown: doc.MoveLayer(-1); break;
+			case Cmd.MergeDown: doc.MergeDown(); break;
+			case Cmd.MergeVisible: doc.FlattenVisible(); break;
+			case Cmd.Actual: view.SetZoomCentered(1); break;
+			case Cmd.IsoMode: SetIso(!view.IsoMode); break;
 			case Cmd.Prefs: GameDialogs.Preferences(this); break;
 			case Cmd.ExportLayers:
 				Ui.PickFile(this, FileDialog.FileModeEnum.OpenDir, Array.Empty<string>(), dir =>
@@ -582,6 +693,37 @@ public partial class Main : Control
 			doc.Resize(nw, nh, doc.ResizeOffset(nw, nh, ax, ay));
 			view.Fit();
 		}, "Изменить");
+	}
+
+	/// <summary>Ctrl+Alt+T: the selection repeated count times with a step; quick steps along the iso axes.</summary>
+	void ShowArrayDialog()
+	{
+		if (doc.Sel == null && doc.Float == null) { Say("сначала выделите объект (M)"); return; }
+		var size = doc.Float?.GetSize() ?? doc.Sel.Value.Size;
+		int even = size.X + (size.X & 1); // 2:1 steps need an even width
+		var count = new SpinBox { MinValue = 2, MaxValue = 200, Value = 3 };
+		var dx = new SpinBox { MinValue = -1024, MaxValue = 1024, Value = doc.LastStep != Vector2I.Zero ? doc.LastStep.X : size.X, Prefix = "Δx" };
+		var dy = new SpinBox { MinValue = -1024, MaxValue = 1024, Value = doc.LastStep.Y, Prefix = "Δy" };
+		var grid = new GridContainer { Columns = 2 };
+		grid.AddChild(new Label { Text = "Копий всего" }); grid.AddChild(count);
+		grid.AddChild(new Label { Text = "Шаг, px" });
+		var step = new HBoxContainer();
+		step.AddChild(dx); step.AddChild(dy);
+		grid.AddChild(step);
+		var quick = new HFlowContainer();
+		foreach (var (label, v) in new (string, Vector2I)[] {
+			("→", new(size.X, 0)), ("↓", new(0, size.Y)), ("←", new(-size.X, 0)), ("↑", new(0, -size.Y)),
+			("↘ 2:1", new(even, even / 2)), ("↗ 2:1", new(even, -even / 2)), ("↙ 2:1", new(-even, even / 2)), ("↖ 2:1", new(-even, -even / 2)) })
+			quick.AddChild(Ui.Btn(label, "Шаг на размер выделения в эту сторону", () => { dx.Value = v.X; dy.Value = v.Y; }));
+		var box = new VBoxContainer();
+		box.AddChild(grid);
+		box.AddChild(quick);
+		box.AddChild(new Label { Text = $"Выделение {size.X}×{size.Y}. Прозрачное не закрывает то, что под ним. Ещё копию с тем же шагом — Ctrl+Alt+Shift+T.", AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(420, 0) });
+		Ui.Dialog(this, "Массив", box, () =>
+		{
+			if (!doc.ArrayCopies((int)count.Value, new Vector2I((int)dx.Value, (int)dy.Value))) Say("массив не получился: нужен шаг и незаблокированный видимый слой");
+			view.QueueRedraw();
+		}, "Размножить");
 	}
 
 	static readonly (string name, int w, int h)[] Presets = { ("64×64", 64, 64), ("128×128", 128, 128), ("256×256", 256, 256), ("320×240", 320, 240) };
