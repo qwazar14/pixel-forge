@@ -455,6 +455,84 @@ public static class SelfTest
 		v.QueueFree();
 	}
 
+	static void ShadingTools(Node root, string dir)
+	{
+		var red = Color.Color8(255, 0, 0);
+		var blue = Color.Color8(0, 0, 255);
+		var none = new Color(0, 0, 0, 0);
+		var warm = Enumerable.Range(0, 4).Select(i => Color.Color8((byte)(60 + 50 * i), (byte)(30 + 40 * i), 20)).ToArray();
+		var cool = Enumerable.Range(0, 3).Select(i => Color.Color8((byte)(40 + 40 * i), (byte)(40 + 40 * i), (byte)(70 + 50 * i))).ToArray();
+
+		var d = new Doc(16, 16);
+		d.Palette.Ramps.Add(new Ramp { Name = "дерево", Colors = warm.Select(c => new PalColor { C = c }).ToList() });
+		d.Palette.Ramps.Add(new Ramp { Name = "тень", Colors = cool.Select(c => new PalColor { C = c }).ToList() });
+		d.BeginStroke(); d.Rect(0, 0, 7, 0, 1, warm[1], true); d.Plot(0, 1, red); d.EndStroke();
+
+		d.BeginStroke(); d.Shade(1, 0, 1, 1); d.Shade(1, 0, 1, 1); d.Shade(0, 1, 1, 1); d.EndStroke();
+		Check(d.Cur.Img.GetPixel(1, 0) == warm[2] && d.Cur.Img.GetPixel(0, 1) == red && d.Cur.Img.GetPixel(2, 0) == warm[1],
+			"shade: one step lighter once per stroke, colours outside the palette untouched");
+		d.BeginStroke(); d.Shade(2, 0, 3, -1); d.EndStroke();
+		Check(d.Cur.Img.GetPixel(2, 0) == warm[0] && d.Cur.Img.GetPixel(3, 0) == warm[0], "shade: 3-px brush darker");
+		d.Undo(); d.Undo();
+		Check(Count(d.Cur.Img, warm[1]) == 8, "shade strokes undo");
+
+		d.BeginStroke(); d.Plot(0, 0, warm[3]); d.EndStroke();
+		d.Sel = new Rect2I(0, 0, 8, 1);
+		int n = d.ShiftRamp(0, d.Palette.Ramps[2]);
+		Check(n == 8 && d.Cur.Img.GetPixel(0, 0) == cool[2] && d.Cur.Img.GetPixel(1, 0) == cool[1] && d.Cur.Img.GetPixel(0, 1) == red,
+			"lit wood onto the shadow ramp, same place by share of length, selection only");
+		d.ShiftRamp(-1, null);
+		Check(d.Cur.Img.GetPixel(0, 0) == cool[1] && d.Cur.Img.GetPixel(1, 0) == cool[0], "then one step darker in its own ramp");
+		d.Sel = null;
+
+		var flat = Image.CreateEmpty(4, 1, false, Image.Format.Rgba8);
+		flat.Fill(red);
+		var sk = Doc.IsoSkew(flat, 1);
+		Check(sk.GetSize() == new Vector2I(4, 2) && sk.GetPixel(1, 0) == red && sk.GetPixel(2, 1) == red && sk.GetPixel(2, 0) == none, "iso skew down: pairs drop a row");
+		sk = Doc.IsoSkew(flat, -1);
+		Check(sk.GetPixel(0, 1) == red && sk.GetPixel(3, 0) == red, "iso skew up");
+		d = new Doc(16, 16);
+		d.Sel = new Rect2I(2, 2, 6, 3);
+		d.FillSelection(red);
+		d.Skew(1);
+		Check(d.Float != null && d.Float.GetSize() == new Vector2I(6, 5), "skew a selection: it floats, taller by half its width");
+		d.Anchor();
+		Check(Count(d.Cur.Img, red) == 18, "skewed piece keeps its pixels");
+
+		var wall = Doc.IsoWallPoints(new Vector2I(0, 0), new Vector2I(6, 8), 1);
+		Check(wall.Contains(new Vector2I(6, 3)) && wall.Contains(new Vector2I(6, 8)) && wall.Contains(new Vector2I(0, 5)) && wall.Contains(new Vector2I(3, 1)) && !wall.Contains(new Vector2I(3, 3)),
+			"iso wall: vertical sides, top and bottom 2:1");
+
+		d = new Doc(8, 8);
+		d.BeginStroke(); d.Plot(1, 1, red); d.EndStroke();
+		d.Cur.LockAlpha = true;
+		d.FillSelection(blue);
+		Check(Count(d.Cur.Img, blue) == 1 && d.Cur.Img.GetPixel(1, 1) == blue, "lock transparency: fill recolours only what's there");
+		d.BeginStroke(); d.Line(0, 0, 7, 7, 1, red); d.EndStroke();
+		Check(Count(d.Cur.Img, red) == 1 && d.Cur.Img.GetPixel(1, 1) == red, "lock transparency: a line paints only over the pixel");
+		d.Save(dir + "/alpha.pforge");
+		Check(Doc.Load(dir + "/alpha.pforge").Layers[0].LockAlpha, "lock transparency survives save/load");
+
+		// canvas: shade brush and iso wall
+		var v = new CanvasView { Size = new Vector2(400, 400) };
+		root.AddChild(v);
+		d = new Doc(32, 32);
+		d.Palette.Ramps.Add(new Ramp { Name = "дерево", Colors = warm.Select(c => new PalColor { C = c }).ToList() });
+		v.SetDoc(d);
+		v.Zoom = 10; v.Offset = Vector2.Zero; v.Fg = warm[1];
+		Vector2 At(int x, int y) => new(x * 10 + 5, y * 10 + 5);
+		void Down(int x, int y, MouseButton b = MouseButton.Left) => v._GuiInput(new InputEventMouseButton { ButtonIndex = b, Pressed = true, Position = At(x, y) });
+		void Up(int x, int y, MouseButton b = MouseButton.Left) => v._GuiInput(new InputEventMouseButton { ButtonIndex = b, Pressed = false, Position = At(x, y) });
+		void To(int x, int y) => v._GuiInput(new InputEventMouseMotion { Position = At(x, y) });
+		v.IsoMode = true; v.IsoShape = IsoShape.WallDown; v.FillShapes = true; v.Tool = Tool.Rect;
+		Down(0, 0); To(6, 8); Up(6, 8);
+		Check(d.Cur.Img.GetPixel(3, 3) == warm[1] && d.Cur.Img.GetPixel(6, 8) == warm[1] && d.Cur.Img.GetPixel(6, 1).A == 0, "canvas: iso wall drawn and filled");
+		v.Tool = Tool.Shade;
+		Down(0, 2, MouseButton.Right); To(5, 2); To(0, 2); Up(0, 2, MouseButton.Right);
+		Check(d.Cur.Img.GetPixel(2, 2) == warm[0] && d.Cur.Img.GetPixel(2, 4) == warm[1], "canvas: shade brush darkens once even when going back over");
+		v.QueueFree();
+	}
+
 	public static int Run(Node root)
 	{
 		var red = Color.Color8(255, 0, 0);
@@ -502,6 +580,7 @@ public static class SelfTest
 		Game(dir);
 		Files(dir);
 		IsoAndArrays(root);
+		ShadingTools(root, dir);
 
 		GD.Print(fails == 0 ? "SELFTEST PASSED" : $"SELFTEST FAILED: {fails}");
 		return fails == 0 ? 0 : 1;

@@ -11,11 +11,13 @@ public class Layer
 	public string Name;
 	public Image Img;
 	public bool Visible = true, Locked, Reference;
+	/// <summary>Lock transparency (Photoshop's "/"): painting only recolours pixels that are already there.</summary>
+	public bool LockAlpha;
 	public float Opacity = 1;
 	/// <summary>Which game views (summer, winter, turned, turned winter) show this layer.</summary>
 	public bool[] Views = { true, true, true, true };
 
-	public Layer With(Image img) => new() { Name = Name, Img = img, Visible = Visible, Locked = Locked, Reference = Reference, Opacity = Opacity, Views = (bool[])Views.Clone() };
+	public Layer With(Image img) => new() { Name = Name, Img = img, Visible = Visible, Locked = Locked, LockAlpha = LockAlpha, Reference = Reference, Opacity = Opacity, Views = (bool[])Views.Clone() };
 }
 
 public enum Place { Center, TopLeft, Anchor }
@@ -101,20 +103,81 @@ public class Doc
 		l.Img.SetPixel(x, y, c);
 	}
 
+	bool Inside(int x, int y) => x >= 0 && y >= 0 && x < W && y < H && (Sel is not Rect2I s || s.HasPoint(new Vector2I(x, y)));
+
 	void Put(int x, int y, Color c)
 	{
-		if (x < 0 || y < 0 || x >= W || y >= H || (Sel is Rect2I s && !s.HasPoint(new Vector2I(x, y)))) return;
+		if (!Inside(x, y)) return;
+		if (strokeLayer.LockAlpha)
+		{
+			// only recolour what is there, keeping its alpha; nothing to erase
+			var a = strokeLayer.Img.GetPixel(x, y).A;
+			if (a == 0 || c.A == 0) return;
+			c.A = a;
+		}
 		Record(strokeLayer, x, y, c);
+	}
+
+	/// <summary>The pixel and its symmetry mirrors.</summary>
+	IEnumerable<Vector2I> Mirrors(int x, int y)
+	{
+		yield return new(x, y);
+		if (!mirror) yield break;
+		if (SymX) yield return new(AxisX2 - 1 - x, y);
+		if (SymY) yield return new(x, AxisY2 - 1 - y);
+		if (SymX && SymY) yield return new(AxisX2 - 1 - x, AxisY2 - 1 - y);
 	}
 
 	public void Plot(int x, int y, Color c)
 	{
 		if (stroke == null) return;
-		Put(x, y, c);
-		if (!mirror) return;
-		if (SymX) Put(AxisX2 - 1 - x, y, c);
-		if (SymY) Put(x, AxisY2 - 1 - y, c);
-		if (SymX && SymY) Put(AxisX2 - 1 - x, AxisY2 - 1 - y, c);
+		foreach (var p in Mirrors(x, y)) Put(p.X, p.Y, c);
+	}
+
+	/// <summary>Shading brush: every pixel under the square brush one step along its ramp (+1 lighter, -1 darker),
+	/// each pixel at most once per stroke so going over it again doesn't keep darkening it.</summary>
+	public void Shade(int x, int y, int size, int dir)
+	{
+		if (stroke == null) return;
+		int o = (size - 1) / 2;
+		stroke.Px.TryGetValue(strokeLayer, out var done);
+		for (int dy = 0; dy < size; dy++)
+			for (int dx = 0; dx < size; dx++)
+				foreach (var p in Mirrors(x - o + dx, y - o + dy))
+				{
+					if (!Inside(p.X, p.Y) || (done != null && done.ContainsKey(p.Y * W + p.X))) continue;
+					var c = strokeLayer.Img.GetPixel(p.X, p.Y);
+					if (c.A > 0 && Palette.Step(c, dir) is Color n) { Record(strokeLayer, p.X, p.Y, n); stroke.Px.TryGetValue(strokeLayer, out done); }
+				}
+	}
+
+	/// <summary>Every palette colour in the selection (or layer) moved along its ramp, or onto the same place of
+	/// another ramp (lit wood to shadow wood): index scaled to the target's length, then shifted. Returns pixels changed.</summary>
+	public int ShiftRamp(int steps, Ramp target)
+	{
+		if (!BeginStroke(false)) return 0;
+		var map = new Dictionary<uint, Color?>();
+		Color? To(Color c)
+		{
+			uint k = c.ToRgba32();
+			if (map.TryGetValue(k, out var m)) return m;
+			var (r, i) = Palette.Find(c);
+			if (r == null) return map[k] = null;
+			var t = target ?? r;
+			int j = r.Colors.Count < 2 || t == r ? i : (int)Math.Round(i * (t.Colors.Count - 1) / (double)(r.Colors.Count - 1));
+			j = Math.Clamp(j + steps, 0, t.Colors.Count - 1);
+			return map[k] = t.Colors.Count == 0 ? null : t.Colors[j].C;
+		}
+		int n = 0;
+		var area = (Sel ?? Bounds).Intersection(Bounds);
+		for (int y = area.Position.Y; y < area.End.Y; y++)
+			for (int x = area.Position.X; x < area.End.X; x++)
+			{
+				var c = strokeLayer.Img.GetPixel(x, y);
+				if (c.A > 0 && To(c) is Color to && to != c) { Record(strokeLayer, x, y, to); n++; }
+			}
+		EndStroke();
+		return n;
 	}
 
 	/// <summary>Undoes the open stroke's pixels but keeps it open (shape tools redraw their preview this way).</summary>
@@ -138,12 +201,17 @@ public class Doc
 	/// <summary>Bresenham line of stamps.</summary>
 	public void Line(int x0, int y0, int x1, int y1, int size, Color c)
 	{
+		foreach (var p in LinePoints(x0, y0, x1, y1)) Stamp(p.X, p.Y, size, c);
+	}
+
+	public static IEnumerable<Vector2I> LinePoints(int x0, int y0, int x1, int y1)
+	{
 		int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
 		int dy = -Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
 		int err = dx + dy;
 		while (true)
 		{
-			Stamp(x0, y0, size, c);
+			yield return new(x0, y0);
 			if (x0 == x1 && y0 == y1) break;
 			int e2 = 2 * err;
 			if (e2 >= dy) { err += dy; x0 += sx; }
@@ -182,6 +250,36 @@ public class Doc
 		var c3 = s + new Vector2I(2 * b, -b);
 		Side(s, a, 1); Side(c3, a, 1);
 		Side(s, b, -1); Side(c1, b, -1);
+		return pts;
+	}
+
+	/// <summary>Isometric wall: vertical sides at s.X and e.X, top and bottom running 2:1 (sy = 1 going down to the
+	/// right, -1 going up), one through s and one through e.</summary>
+	public void IsoWall(Vector2I s, Vector2I e, int sy, int size, Color c, bool fill)
+	{
+		var pts = IsoWallPoints(s, e, sy);
+		if (!fill) { foreach (var p in pts) Stamp(p.X, p.Y, size, c); return; }
+		foreach (var col in pts.GroupBy(p => p.X))
+			for (int y = col.Min(p => p.Y); y <= col.Max(p => p.Y); y++) Plot(col.Key, y, c);
+	}
+
+	public static HashSet<Vector2I> IsoWallPoints(Vector2I s, Vector2I e, int sy)
+	{
+		var pts = new HashSet<Vector2I>();
+		if (s.X > e.X) (s, e) = (e, s);
+		int n = e.X - s.X;
+		// both slanted edges start at the left column with the same pair phase, so they are the same line moved up/down
+		int yA = s.Y, yB = e.Y - sy * (n / 2);
+		for (int i = 0; i <= n; i++)
+		{
+			pts.Add(new(s.X + i, yA + sy * (i / 2)));
+			pts.Add(new(s.X + i, yB + sy * (i / 2)));
+		}
+		foreach (var (x, i) in new[] { (s.X, 0), (e.X, n) })
+		{
+			int a = yA + sy * (i / 2), b = yB + sy * (i / 2);
+			for (int y = Math.Min(a, b); y <= Math.Max(a, b); y++) pts.Add(new(x, y));
+		}
 		return pts;
 	}
 
@@ -364,6 +462,22 @@ public class Doc
 	}
 
 	public void FlipH() => Transform(i => { i.FlipX(); return i; });
+
+	/// <summary>A flat drawing sheared into isometry: every column dropped by x/2 (sy = 1, the wall runs down to the
+	/// right) or raised (sy = -1, up to the right), in pairs like a 2:1 line.</summary>
+	public static Image IsoSkew(Image src, int sy)
+	{
+		int w = src.GetWidth(), h = src.GetHeight(), extra = (w - 1) / 2;
+		var dst = Image.CreateEmpty(w, h + extra, false, Image.Format.Rgba8);
+		for (int x = 0; x < w; x++)
+		{
+			int dy = sy > 0 ? x / 2 : extra - x / 2;
+			for (int y = 0; y < h; y++) dst.SetPixel(x, y + dy, src.GetPixel(x, y));
+		}
+		return dst;
+	}
+
+	public void Skew(int sy) => Transform(i => IsoSkew(i, sy));
 	public void FlipV() => Transform(i => { i.FlipY(); return i; });
 	public void Rotate(bool cw) => Transform(i => { i.Rotate90(cw ? ClockDirection.Clockwise : ClockDirection.Counterclockwise); return i; });
 
@@ -384,7 +498,7 @@ public class Doc
 		if (!BeginStroke(false)) return;
 		var r = (Sel ?? Bounds).Intersection(Bounds);
 		for (int y = r.Position.Y; y < r.End.Y; y++)
-			for (int x = r.Position.X; x < r.End.X; x++) Record(strokeLayer, x, y, c);
+			for (int x = r.Position.X; x < r.End.X; x++) Put(x, y, c);
 		EndStroke();
 	}
 
@@ -757,6 +871,7 @@ public class Doc
 		public string name { get; set; }
 		public bool visible { get; set; } = true;
 		public bool locked { get; set; }
+		public bool lockAlpha { get; set; }
 		public bool reference { get; set; }
 		public float opacity { get; set; } = 1;
 		public bool[] views { get; set; }
@@ -802,7 +917,7 @@ public class Doc
 		{
 			var l = Layers[i];
 			var file = $"layers/{i}.png";
-			dto.layers.Add(new LayerDto { name = l.Name, visible = l.Visible, locked = l.Locked, reference = l.Reference, opacity = l.Opacity, views = l.Views, file = file });
+			dto.layers.Add(new LayerDto { name = l.Name, visible = l.Visible, locked = l.Locked, lockAlpha = l.LockAlpha, reference = l.Reference, opacity = l.Opacity, views = l.Views, file = file });
 			zip.StartFile(file);
 			zip.WriteFile(l.Img.SavePngToBuffer());
 			zip.CloseFile();
@@ -843,7 +958,7 @@ public class Doc
 				var img = new Image();
 				if (img.LoadPngFromBuffer(zip.ReadFile(l.file)) != Error.Ok) return null;
 				img.Convert(Image.Format.Rgba8);
-				d.Layers.Add(new Layer { Name = l.name, Visible = l.visible, Locked = l.locked, Reference = l.reference, Opacity = l.opacity, Img = img, Views = l.views is { Length: 4 } ? l.views : new[] { true, true, true, true } });
+				d.Layers.Add(new Layer { Name = l.name, Visible = l.visible, Locked = l.locked, LockAlpha = l.lockAlpha, Reference = l.reference, Opacity = l.opacity, Img = img, Views = l.views is { Length: 4 } ? l.views : new[] { true, true, true, true } });
 			}
 			if (dto.palette != null) d.Palette = Palette.FromDto(dto.palette);
 			d.Current = Math.Clamp(dto.current, 0, d.Layers.Count - 1);

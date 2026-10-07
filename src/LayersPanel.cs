@@ -10,7 +10,7 @@ public partial class LayersPanel : VBoxContainer
 	LineEdit name;
 	HSlider opacity;
 	Label opLabel;
-	CheckBox lockBox, refBox;
+	CheckBox lockBox, refBox, alphaBox;
 
 	public override void _Ready()
 	{
@@ -49,6 +49,9 @@ public partial class LayersPanel : VBoxContainer
 		refBox = new CheckBox { Text = "Подложка (не экспортируется)", FocusMode = FocusModeEnum.None };
 		refBox.Toggled += on => { doc.Cur.Reference = on; doc.Touch(); };
 		AddChild(lockBox);
+		alphaBox = new CheckBox { Text = "Защитить прозрачность  /", FocusMode = FocusModeEnum.None, TooltipText = "Рисовать только поверх уже закрашенных пикселей" };
+		alphaBox.Toggled += on => { doc.Cur.LockAlpha = on; doc.Touch(); };
+		AddChild(alphaBox);
 		AddChild(refBox);
 	}
 
@@ -84,7 +87,7 @@ public partial class LayersPanel : VBoxContainer
 			var row = new HBoxContainer();
 			var eye = Ui.Btn(l.Visible ? "👁" : "   ", "Показать / скрыть", () => { l.Visible = !l.Visible; doc.Touch(); });
 			eye.CustomMinimumSize = new Vector2(40, 0);
-			var tag = (l.Reference ? "  [подложка]" : "") + (l.Locked ? "  🔒" : "") + (l.Opacity < 1 ? $"  {Mathf.RoundToInt(l.Opacity * 100)}%" : "");
+			var tag = (l.Reference ? "  [подложка]" : "") + (l.Locked ? "  🔒" : "") + (l.LockAlpha ? "  ▦" : "") + (l.Opacity < 1 ? $"  {Mathf.RoundToInt(l.Opacity * 100)}%" : "");
 			var sel = Ui.Btn(l.Name + tag, "", () => doc.Select(idx));
 			sel.ToggleMode = true;
 			sel.ButtonPressed = i == doc.Current;
@@ -104,6 +107,7 @@ public partial class LayersPanel : VBoxContainer
 		opacity.SetValueNoSignal(Mathf.RoundToInt(cur.Opacity * 100));
 		opLabel.Text = $"{Mathf.RoundToInt(cur.Opacity * 100)}";
 		lockBox.SetPressedNoSignal(cur.Locked);
+		alphaBox.SetPressedNoSignal(cur.LockAlpha);
 		refBox.SetPressedNoSignal(cur.Reference);
 	}
 }

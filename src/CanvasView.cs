@@ -5,7 +5,10 @@ using System.Linq;
 
 namespace PixelForge;
 
-public enum Tool { Move, Select, Pencil, Eraser, Fill, Picker, Line, Rect, Ellipse, Anchor, Hand }
+public enum Tool { Move, Select, Pencil, Eraser, Shade, Fill, Picker, Line, Rect, Ellipse, Anchor, Hand }
+
+/// <summary>What the rectangle draws in iso mode: a diamond on the ground or a wall running down / up to the right.</summary>
+public enum IsoShape { Floor, WallDown, WallUp }
 
 /// <summary>Shows the document and turns mouse input into strokes, zoom and pan.</summary>
 public partial class CanvasView : Control
@@ -18,6 +21,7 @@ public partial class CanvasView : Control
 	public bool FillShapes, Contiguous = true;
 	/// <summary>Isometric mode: lines snap to 2:1, rectangles lie on the ground as 2:1 diamonds, ellipses are iso circles.</summary>
 	public bool IsoMode;
+	public IsoShape IsoShape;
 	public int Tolerance;
 	public Color Fg = Colors.Black, Bg = Colors.White;
 	public bool ShowGrid = true, ShowIso, ShowBase = true, ShowLight;
@@ -123,7 +127,7 @@ public partial class CanvasView : Control
 	bool Begin(bool mirrored = true)
 	{
 		var c = PaintColor();
-		if (Tool != Tool.Eraser && Doc.Palette.Strict && !Doc.Palette.Contains(c)) { Message?.Invoke("цвет не из палитры (режим «только палитра»)"); return false; }
+		if (Tool is not (Tool.Eraser or Tool.Shade) && Doc.Palette.Strict && !Doc.Palette.Contains(c)) { Message?.Invoke("цвет не из палитры (режим «только палитра»)"); return false; }
 		if (Doc.BeginStroke(mirrored)) return true;
 		Message?.Invoke(Doc.Cur.Locked ? "слой заблокирован" : "слой скрыт");
 		return false;
@@ -169,15 +173,15 @@ public partial class CanvasView : Control
 		}
 		if (mb.ButtonIndex is not (MouseButton.Left or MouseButton.Right)) return;
 		// Alt picks a colour only with painting tools (Photoshop): with Move/Select it copies instead
-		bool paints = Tool is Tool.Pencil or Tool.Eraser or Tool.Fill or Tool.Line or Tool.Rect or Tool.Ellipse;
+		bool paints = Tool is Tool.Pencil or Tool.Eraser or Tool.Shade or Tool.Fill or Tool.Line or Tool.Rect or Tool.Ellipse;
 		if (Tool == Tool.Picker || (paints && mb.AltPressed)) { drag = Drag.Pick; Pick(p); return; }
 
 		switch (Tool)
 		{
-			case Tool.Pencil or Tool.Eraser:
+			case Tool.Pencil or Tool.Eraser or Tool.Shade:
 				if (!Begin()) return;
 				drag = Drag.Paint;
-				Doc.Stamp(p.X, p.Y, BrushSize, PaintColor());
+				Dab(p);
 				RefreshCurrent();
 				break;
 			case Tool.Line or Tool.Rect or Tool.Ellipse:
@@ -228,7 +232,7 @@ public partial class CanvasView : Control
 		{
 			case Drag.Pick: Pick(p); break;
 			case Drag.Paint:
-				Doc.Line(last.X, last.Y, p.X, p.Y, BrushSize, PaintColor());
+				foreach (var q in Doc.LinePoints(last.X, last.Y, p.X, p.Y)) Dab(q);
 				RefreshCurrent();
 				break;
 			case Drag.Shape:
@@ -251,6 +255,13 @@ public partial class CanvasView : Control
 		last = p;
 	}
 
+	/// <summary>One brush dab: paint, erase, or shade (left button lighter, right darker along the ramp).</summary>
+	void Dab(Vector2I p)
+	{
+		if (Tool == Tool.Shade) Doc.Shade(p.X, p.Y, BrushSize, dragButton == MouseButton.Right ? -1 : 1);
+		else Doc.Stamp(p.X, p.Y, BrushSize, PaintColor());
+	}
+
 	/// <summary>Draws the line/rect/ellipse from the drag start to p. Shift: square shapes, isometric 2:1 lines.</summary>
 	void Shape(Vector2I p, bool shift)
 	{
@@ -258,7 +269,8 @@ public partial class CanvasView : Control
 		var d = p - start;
 		if (Tool == Tool.Rect && IsoMode)
 		{
-			Doc.IsoRect(start, p, BrushSize, c, FillShapes);
+			if (IsoShape == IsoShape.Floor) Doc.IsoRect(start, p, BrushSize, c, FillShapes);
+			else Doc.IsoWall(start, p, IsoShape == IsoShape.WallDown ? 1 : -1, BrushSize, c, FillShapes);
 			RefreshCurrent();
 			return;
 		}
@@ -398,7 +410,7 @@ public partial class CanvasView : Control
 
 		if (ShowLight) DrawLightHint();
 
-		if (Hover.X >= 0 && Tool is Tool.Pencil or Tool.Eraser or Tool.Line or Tool.Rect or Tool.Ellipse && drag == Drag.None)
+		if (Hover.X >= 0 && Tool is Tool.Pencil or Tool.Eraser or Tool.Shade or Tool.Line or Tool.Rect or Tool.Ellipse && drag == Drag.None)
 		{
 			int o = (BrushSize - 1) / 2;
 			var br = new Rect2(Offset + (Vector2)(Hover - new Vector2I(o, o)) * Zoom, Vector2.One * BrushSize * Zoom);

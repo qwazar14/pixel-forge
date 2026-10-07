@@ -6,7 +6,7 @@ namespace PixelForge;
 
 public partial class Main : Control
 {
-	enum Cmd { FillFg, FillBg, ViaCopy, Array, StepRepeat, NewLayer, MergeDown, MergeVisible, LayerUp, LayerDown, DeleteLayer, Actual, IsoMode, New, Open, Save, SaveAs, Export, ExportLayers, Help, Prefs, Import, Resize, MirrorAll, Iso, Base, Light, Turned, Views, GameExport, Sketch, Quit, Undo, Redo, ReplaceColor, Copy, Cut, Paste, Delete, SelectAll, Deselect, FlipH, FlipV, RotCw, RotCcw, Grid, ZoomIn, ZoomOut, Fit }
+	enum Cmd { ShiftRamp, SkewDown, SkewUp, LockAlpha, FillFg, FillBg, ViaCopy, Array, StepRepeat, NewLayer, MergeDown, MergeVisible, LayerUp, LayerDown, DeleteLayer, Actual, IsoMode, New, Open, Save, SaveAs, Export, ExportLayers, Help, Prefs, Import, Resize, MirrorAll, Iso, Base, Light, Turned, Views, GameExport, Sketch, Quit, Undo, Redo, ReplaceColor, Copy, Cut, Paste, Delete, SelectAll, Deselect, FlipH, FlipV, RotCw, RotCcw, Grid, ZoomIn, ZoomOut, Fit }
 
 	CanvasView view;
 	Label status;
@@ -46,7 +46,10 @@ public partial class Main : Control
 
 		var mid = new HBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
 		root.AddChild(mid);
-		mid.AddChild(BuildTools());
+		// the tool panel scrolls rather than stretching the window past a 1080p screen
+		var toolScroll = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled, CustomMinimumSize = new Vector2(210, 0) };
+		toolScroll.AddChild(BuildTools());
+		mid.AddChild(toolScroll);
 		view = new CanvasView { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
 		mid.AddChild(view);
 		mid.AddChild(BuildRight());
@@ -139,6 +142,10 @@ public partial class Main : Control
 		I(e, "Массив…", Cmd.Array, CtrlAlt(Key.T));
 		I(e, "Ещё одна копия с тем же шагом", Cmd.StepRepeat, CtrlAlt(Key.T, true));
 		e.AddSeparator();
+		I(e, "Сдвиг по рампе / в другую рампу…", Cmd.ShiftRamp);
+		I(e, "Изо-скос ↘ (стена вниз вправо)", Cmd.SkewDown);
+		I(e, "Изо-скос ↗ (стена вверх вправо)", Cmd.SkewUp);
+		e.AddSeparator();
 		I(e, "Выделить всё", Cmd.SelectAll, Ctrl(Key.A));
 		I(e, "Снять выделение", Cmd.Deselect, Ctrl(Key.D));
 		e.AddSeparator();
@@ -153,6 +160,7 @@ public partial class Main : Control
 		I(l, "Новый слой", Cmd.NewLayer, Ctrl(Key.N, true));
 		I(l, "Дубль на новый слой (выделенное или весь слой)", Cmd.ViaCopy);
 		I(l, "Удалить слой", Cmd.DeleteLayer);
+		I(l, "Защитить прозрачность   /", Cmd.LockAlpha);
 		l.AddSeparator();
 		I(l, "Выше", Cmd.LayerUp, Ctrl(Key.Bracketright));
 		I(l, "Ниже", Cmd.LayerDown, Ctrl(Key.Bracketleft));
@@ -194,7 +202,7 @@ public partial class Main : Control
 		var group = new ButtonGroup();
 		foreach (var (t, label) in new[] {
 			(Tool.Move, "Перемещение  V"), (Tool.Select, "Выделение  M"),
-			(Tool.Pencil, "Карандаш  B"), (Tool.Eraser, "Ластик  E"), (Tool.Fill, "Заливка  G"), (Tool.Picker, "Пипетка  I"),
+			(Tool.Pencil, "Карандаш  B"), (Tool.Eraser, "Ластик  E"), (Tool.Shade, "Тон  O"), (Tool.Fill, "Заливка  G"), (Tool.Picker, "Пипетка  I"),
 			(Tool.Line, "Линия  U"), (Tool.Rect, "Прямоугольник  U"), (Tool.Ellipse, "Эллипс  U"),
 			(Tool.Anchor, "Якорь  A"), (Tool.Hand, "Рука  H") })
 		{
@@ -212,6 +220,12 @@ public partial class Main : Control
 		box.AddChild(brush);
 		box.AddChild(Check("Заливать фигуры", false, on => view.FillShapes = on));
 		box.AddChild(Check("Изо-режим 2:1", false, on => SetIso(on), out isoBox));
+		var isoShape = new OptionButton { FocusMode = FocusModeEnum.None, TooltipText = "Что рисует прямоугольник в изо-режиме" };
+		isoShape.AddItem("◇ ромб на земле");
+		isoShape.AddItem("▱ стена ↘");
+		isoShape.AddItem("▱ стена ↗");
+		isoShape.ItemSelected += i => view.IsoShape = (IsoShape)(int)i;
+		box.AddChild(isoShape);
 
 		box.AddChild(new Label { Text = "Допуск заливки" });
 		var tol = new SpinBox { MinValue = 0, MaxValue = 255, Value = 0 };
@@ -345,6 +359,10 @@ public partial class Main : Control
 		Key(Godot.Key.U); Check(view.Tool == Tool.Rect, "U shape");
 		Key(Godot.Key.U, shift: true); Check(view.Tool == Tool.Ellipse, "Shift+U next shape");
 		Key(Godot.Key.B); Check(view.Tool == Tool.Pencil, "B pencil");
+		Key(Godot.Key.O); Check(view.Tool == Tool.Shade, "O shade");
+		Key(Godot.Key.Slash); Check(doc.Cur.LockAlpha, "/ lock transparency");
+		Key(Godot.Key.Slash); Check(!doc.Cur.LockAlpha, "/ again unlocks");
+		Key(Godot.Key.B);
 		Key(Godot.Key.Bracketright); Key(Godot.Key.Bracketright); Check(view.BrushSize == 3, "] bigger brush");
 		Key(Godot.Key.Bracketleft); Check(view.BrushSize == 2, "[ smaller brush");
 		view.Fg = Colors.Red; Key(Godot.Key.D); Check(view.Fg == Colors.Black && view.Bg == Colors.White, "D default colours");
@@ -444,6 +462,8 @@ public partial class Main : Control
 			case Key.V: SetTool(Tool.Move); break;
 			case Key.M: SetTool(Tool.Select); break;
 			case Key.B: SetTool(Tool.Pencil); break;
+			case Key.O: SetTool(Tool.Shade); break;
+			case Key.Slash: Run(Cmd.LockAlpha); break;
 			case Key.E: SetTool(Tool.Eraser); break;
 			case Key.G: SetTool(Tool.Fill); break;
 			case Key.I: SetTool(Tool.Picker); break;
@@ -484,6 +504,14 @@ public partial class Main : Control
 				else doc.FillSelection(fc);
 				break;
 			case Cmd.ViaCopy: doc.LayerViaCopy(); break;
+			case Cmd.ShiftRamp: ShowShiftRampDialog(); break;
+			case Cmd.SkewDown: doc.Skew(1); break;
+			case Cmd.SkewUp: doc.Skew(-1); break;
+			case Cmd.LockAlpha:
+				doc.Cur.LockAlpha = !doc.Cur.LockAlpha;
+				doc.Touch();
+				Say(doc.Cur.LockAlpha ? "прозрачность слоя защищена: рисуется только поверх закрашенного" : "защита прозрачности снята");
+				break;
 			case Cmd.Array: ShowArrayDialog(); break;
 			case Cmd.StepRepeat: if (!doc.StepRepeat()) Say("сначала сделайте массив (Ctrl+Alt+T) с выделением"); view.QueueRedraw(); break;
 			case Cmd.NewLayer: doc.AddLayer(); break;
@@ -693,6 +721,30 @@ public partial class Main : Control
 			doc.Resize(nw, nh, doc.ResizeOffset(nw, nh, ax, ay));
 			view.Fit();
 		}, "Изменить");
+	}
+
+	/// <summary>Every palette colour in the selection (or layer) some steps along its ramp, or onto another ramp.</summary>
+	void ShowShiftRampDialog()
+	{
+		var steps = new SpinBox { MinValue = -7, MaxValue = 7, Value = -1, Prefix = "шагов" };
+		var target = new OptionButton();
+		target.AddItem("в своей рампе");
+		foreach (var r in doc.Palette.Ramps) target.AddItem("в рампу «" + r.Name + "»");
+		var grid = new GridContainer { Columns = 2 };
+		grid.AddChild(new Label { Text = "Сдвиг (− темнее, + светлее)" }); grid.AddChild(steps);
+		grid.AddChild(new Label { Text = "Куда" }); grid.AddChild(target);
+		var box = new VBoxContainer();
+		box.AddChild(grid);
+		box.AddChild(new Label
+		{
+			Text = (doc.Sel == null ? "Весь слой. " : "Только выделенное. ") + "Цвет из другой рампы встаёт на то же место новой (по доле длины), потом сдвигается. Цвета не из палитры не трогаются.",
+			AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(440, 0),
+		});
+		Ui.Dialog(this, "Сдвиг по рампе", box, () =>
+		{
+			var t = target.Selected == 0 ? null : doc.Palette.Ramps[target.Selected - 1];
+			Say($"перекрашено пикселей: {doc.ShiftRamp((int)steps.Value, t)}");
+		}, "Сдвинуть");
 	}
 
 	/// <summary>Ctrl+Alt+T: the selection repeated count times with a step; quick steps along the iso axes.</summary>
