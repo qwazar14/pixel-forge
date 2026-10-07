@@ -6,7 +6,7 @@ namespace PixelForge;
 
 public partial class Main : Control
 {
-	enum Cmd { New, Open, Save, SaveAs, Export, ExportLayers, Help, Import, Resize, MirrorAll, Iso, Base, Light, Turned, Views, GameExport, Sketch, Quit, Undo, Redo, ReplaceColor, Copy, Cut, Paste, Delete, SelectAll, Deselect, FlipH, FlipV, RotCw, RotCcw, Grid, ZoomIn, ZoomOut, Fit }
+	enum Cmd { New, Open, Save, SaveAs, Export, ExportLayers, Help, Prefs, Import, Resize, MirrorAll, Iso, Base, Light, Turned, Views, GameExport, Sketch, Quit, Undo, Redo, ReplaceColor, Copy, Cut, Paste, Delete, SelectAll, Deselect, FlipH, FlipV, RotCw, RotCcw, Grid, ZoomIn, ZoomOut, Fit }
 
 	CanvasView view;
 	Label status;
@@ -115,6 +115,8 @@ public partial class Main : Control
 		I(f, "Импорт PNG как слой…", Cmd.Import, Ctrl(Key.I, true));
 		I(f, "Экспорт PNG…", Cmd.Export, Ctrl(Key.E, true));
 		I(f, "Экспорт слоёв (PNG на слой)…", Cmd.ExportLayers);
+		f.AddSeparator();
+		I(f, "Настройки…", Cmd.Prefs);
 		f.AddSeparator();
 		I(f, "Выход", Cmd.Quit, Ctrl(Key.Q));
 
@@ -381,6 +383,7 @@ public partial class Main : Control
 			case Cmd.Export: Ui.PickFile(this, FileDialog.FileModeEnum.SaveFile, new[] { "*.png ; PNG" }, p => Report(doc.ExportPng(p), "Экспорт")); break;
 			case Cmd.Quit: Guard(() => GetTree().Quit()); break;
 			case Cmd.Help: Help.Show(this); break;
+			case Cmd.Prefs: GameDialogs.Preferences(this); break;
 			case Cmd.ExportLayers:
 				Ui.PickFile(this, FileDialog.FileModeEnum.OpenDir, Array.Empty<string>(), dir =>
 					Say($"слоёв сохранено: {doc.ExportLayers(dir, doc.Path == null ? "layers" : System.IO.Path.GetFileNameWithoutExtension(doc.Path))}"));

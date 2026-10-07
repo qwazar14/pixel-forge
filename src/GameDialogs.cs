@@ -86,12 +86,43 @@ public static class GameDialogs
 		}, "Экспорт");
 	}
 
+	/// <summary>Файл → Настройки: the sketch folder (relative to PixelForge's folder or absolute) and the default export folder.</summary>
+	public static void Preferences(Node parent)
+	{
+		var grid = new GridContainer { Columns = 3 };
+		var sketch = new LineEdit { Text = Settings.Get("sketch_dir", Sketch.DefaultRel), CustomMinimumSize = new Vector2(520, 0) };
+		var export = new LineEdit { Text = Settings.Get("export_dir", ""), PlaceholderText = "не задана" };
+		var found = new Label { Modulate = new Color(1, 1, 1, 0.7f) };
+		void Check()
+		{
+			var p = Sketch.Resolve(sketch.Text);
+			found.Text = (System.IO.Directory.Exists(p) ? "найдена: " : "нет такой папки: ") + p;
+		}
+		sketch.TextChanged += _ => Check();
+		Check();
+		var sketchBtns = new HBoxContainer();
+		sketchBtns.AddChild(Ui.Btn("…", "Выбрать папку", () => Ui.PickFile(parent, FileDialog.FileModeEnum.OpenDir, Array.Empty<string>(), p => { sketch.Text = p; Check(); })));
+		sketchBtns.AddChild(Ui.Btn("По умолчанию", Sketch.DefaultRel, () => { sketch.Text = Sketch.DefaultRel; Check(); }));
+		grid.AddChild(new Label { Text = "Эскизы rf-game" }); grid.AddChild(sketch); grid.AddChild(sketchBtns);
+		grid.AddChild(new Control()); grid.AddChild(found); grid.AddChild(new Control());
+		grid.AddChild(new Label { Text = "Экспорт для игры" }); grid.AddChild(export);
+		grid.AddChild(Ui.Btn("…", "Выбрать папку", () => Ui.PickFile(parent, FileDialog.FileModeEnum.OpenDir, Array.Empty<string>(), p => export.Text = p)));
+		var box = new VBoxContainer();
+		box.AddChild(grid);
+		box.AddChild(new Label { Text = "Относительный путь считается от папки PixelForge (или выше, если там нет).", Modulate = new Color(1, 1, 1, 0.7f) });
+		Ui.Dialog(parent, "Настройки", box, () =>
+		{
+			Settings.Set("sketch_dir", sketch.Text.Trim());
+			Settings.Set("export_dir", export.Text.Trim());
+		}, "Сохранить");
+	}
+
 	/// <summary>Picks a sketch; opens it as a new project or adds it as a reference layer.</summary>
 	public static void OpenSketch(Node parent, Doc doc, Action<Doc> opened, Action<string> say)
 	{
 		var box = new VBoxContainer { CustomMinimumSize = new Vector2(620, 560) };
 		var row = new HBoxContainer();
-		var dir = new LineEdit { Text = Settings.Get("sketch_dir", Sketch.DefaultDir), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var dir = new LineEdit { Text = Settings.Get("sketch_dir", Sketch.DefaultRel), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		row.AddChild(dir);
 		var filter = new LineEdit { PlaceholderText = "поиск" };
 		var list = new ItemList { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
@@ -105,7 +136,7 @@ public static class GameDialogs
 		}
 		void Reload()
 		{
-			all = Sketch.List(dir.Text);
+			all = Sketch.List(Sketch.Resolve(dir.Text));
 			Settings.Set("sketch_dir", dir.Text);
 			Fill();
 		}

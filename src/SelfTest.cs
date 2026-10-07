@@ -344,7 +344,7 @@ public static class SelfTest
 		Check(nb.W % 2 == 1 && nb.Pivot.X == nb.W / 2 && nb.Pivot.X - 6 * 9 >= 0 && nb.Pivot.X + 5 * 9 < nb.W && nb.Pivot.Y - 50 - 80 >= 0 && nb.BaseW == 6,
 			$"building canvas fits footprint and height ({nb.W}×{nb.H}, anchor {nb.Pivot})");
 
-		var all = Sketch.List(Sketch.DefaultDir);
+		var all = Sketch.List(Sketch.Dir);
 		var izba = all.FirstOrDefault(x => x.Name == "izba");
 		var izbaT = all.FirstOrDefault(x => x.Name == "izba_turn");
 		if (izba == null) { GD.Print("skip  rf-game sketches not found"); return; }

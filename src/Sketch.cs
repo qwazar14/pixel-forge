@@ -10,7 +10,28 @@ namespace PixelForge;
 /// <summary>A sketch from rf-game's art_src/prefab_src: the PNG plus index.json's footprint and front corner.</summary>
 public class Sketch
 {
-	public const string DefaultDir = "../rf-game/art_src/prefab_src";
+	/// <summary>Default sketch folder: rf-game is expected to sit next to the pixel-forge folder.</summary>
+	public const string DefaultRel = "../rf-game/art_src/prefab_src";
+
+	/// <summary>PixelForge's own folder: the project when run from source, the exe's folder when built.</summary>
+	static string Home => OS.HasFeature("template") ? Path.GetDirectoryName(OS.GetExecutablePath()) : ProjectSettings.GlobalizePath("res://");
+
+	/// <summary>An absolute path as is; a relative one from PixelForge's folder or the first parent where it exists
+	/// (the built exe lives one level down, in build/).</summary>
+	public static string Resolve(string path)
+	{
+		if (string.IsNullOrWhiteSpace(path)) path = DefaultRel;
+		if (Path.IsPathRooted(path)) return path;
+		for (var dir = new DirectoryInfo(Home); dir != null; dir = dir.Parent)
+		{
+			var p = Path.GetFullPath(Path.Combine(dir.FullName, path));
+			if (Directory.Exists(p)) return p;
+		}
+		return Path.GetFullPath(Path.Combine(Home, path));
+	}
+
+	/// <summary>The sketch folder from the settings (relative or absolute), resolved.</summary>
+	public static string Dir => Resolve(Settings.Get("sketch_dir", DefaultRel));
 	const int Margin = 8;
 
 	public string Name, Id, Ru, File;
